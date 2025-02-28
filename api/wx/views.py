@@ -6498,6 +6498,9 @@ def get_agromet_summary_data(request):
             'summary_type': request.GET.get('summary_type'),
             'months': request.GET.get('months'),
             'interval': request.GET.get('interval'),
+            'validate_data': request.GET.get('validate_data').lower() == 'true',
+            'min_hour_pct': request.GET.get('min_hour_pct'),
+            'max_day_gap': request.GET.get('max_day_gap'),
         }
     except ValueError as e:
         logger.error(repr(e))
@@ -6523,7 +6526,9 @@ def get_agromet_summary_data(request):
         'end_date': requestedData['end_date'],
         'start_year': requestedData['start_year'],
         'end_year': requestedData['end_year'],
-        'months': requestedData['months']
+        'months': requestedData['months'],
+        'min_hour_pct': float(requestedData['min_hour_pct'])/100,
+        'max_day_gap': float(requestedData['max_day_gap'])
     }
     env = Environment(loader=FileSystemLoader('/surface/wx/sql/agromet/agromet_summaries'))
 
@@ -6532,20 +6537,32 @@ def get_agromet_summary_data(request):
     is_hourly_summary = station.is_automatic or station.code == pgia_code
 
     if requestedData['summary_type'] == 'Seasonal':
-        template_name = 'seasonal_hourly_hs80filter.sql' if is_hourly_summary else 'seasonal_daily.sql'
+        if requestedData['validate_data']:
+            template_name = 'seasonal_hourly_valid.sql' if is_hourly_summary else 'seasonal_daily_valid.sql'
+        else:
+            template_name = 'seasonal_hourly_raw.sql' if is_hourly_summary else 'seasonal_daily_raw.sql'
+            
     elif requestedData['summary_type'] == 'Monthly':
-        interval = requestedData['interval']
-        if interval == '7 days':
-            template_name = 'monthly_7d_hourly.sql' if is_hourly_summary else 'monthly_7d_daily.sql'
-        elif interval == '10 days':
-            template_name = 'monthly_10d_hourly.sql' if is_hourly_summary else 'monthly_10d_daily.sql'
-        elif interval == '1 month':
-            template_name = 'monthly_1m_hourly.sql' if is_hourly_summary else 'monthly_1m_daily.sql'
+        if requestedData['interval'] == '7 days':
+            if requestedData['validate_data']:
+                template_name = 'monthly_7d_hourly_valid.sql' if is_hourly_summary else 'monthly_7d_daily_valid.sql'
+            else:
+                template_name = 'monthly_7d_hourly_raw.sql' if is_hourly_summary else 'monthly_7d_daily_raw.sql'
+
+        elif requestedData['interval'] == '10 days':
+            if requestedData['validate_data']:
+               template_name = 'monthly_10d_hourly_valid.sql' if is_hourly_summary else 'monthly_10d_daily_valid.sql'
+            else:
+               template_name = 'monthly_10d_hourly_raw.sql' if is_hourly_summary else 'monthly_10d_daily_raw.sql'            
+        elif requestedData['interval'] == '1 month':
+            if requestedData['validate_data']:
+                template_name = 'monthly_1m_hourly_valid.sql' if is_hourly_summary else 'monthly_1m_daily_valid.sql'
+            else:
+                template_name = 'monthly_1m_hourly_raw.sql' if is_hourly_summary else 'monthly_1m_daily_raw.sql'
+            
 
     template = env.get_template(template_name)
     query = template.render(context)
-
-    print(query)
 
     config = settings.SURFACE_CONNECTION_STRING
     with psycopg2.connect(config) as conn:
@@ -6553,53 +6570,36 @@ def get_agromet_summary_data(request):
         # data = df.fillna('').to_dict(orient='records')
 
     if df.empty:
-        data=[]
-    else:
-        if(requestedData['summary_type']=='Monthly' and requestedData['interval']=='1 month'):
-            index = [col for col in df.columns if col not in ['agg', 'value']]
-            pivot_df = df
-        else:
-            index = [col for col in df.columns if col not in ['agg', 'value']]
+        response = []
+        return JsonResponse(response, status=status.HTTP_200_OK, safe=False)
 
-            pivot_df = df.pivot_table(
-                index=index,
-                columns='agg',
-                values='value',
-                aggfunc='first'
-            ).reset_index()
 
-        agg_cols = [col for col in pivot_df.columns if col not in index]  # Columns to aggregate
-        grouped = pivot_df.groupby(['station', 'variable_id'])
+    index = ['station', 'variable_id', 'month', 'year']
+    # index = [col for col in df.columns if col not in ['agg', 'value']] 
+    agg_cols = [col for col in df.columns if col not in index]  # Columns to aggregate
+    grouped = df.groupby(['station', 'variable_id'])
 
-        def calculate_stats(group):
-            min_values = group[agg_cols].min()
-            max_values = group[agg_cols].max()
-            avg_values = group[agg_cols].mean().round(2)
-            std_values = group[agg_cols].std().round(2)
+    def calculate_stats(group):
+        min_values = group[agg_cols].min()
+        max_values = group[agg_cols].max()
+        avg_values = group[agg_cols].mean().round(2)
+        std_values = group[agg_cols].std().round(2)
 
-            stats_dict = {}
-            for col in agg_cols:
-                stats_dict[col] = [min_values[col], max_values[col], avg_values[col], std_values[col]]
-            stats_dict['station'] = group.name[0]
-            stats_dict['variable_id'] = group.name[1]
-            stats_dict['year'] = ['MIN', 'MAX', 'AVG', 'STD'] 
-            
-            new_rows = pd.DataFrame(stats_dict)
-            
-            return pd.concat([group, new_rows], ignore_index=True)
+        stats_dict = {}
+        for col in agg_cols:
+            stats_dict[col] = [min_values[col], max_values[col], avg_values[col], std_values[col]]
+        stats_dict['station'] = group.name[0]
+        stats_dict['variable_id'] = group.name[1]
+        stats_dict['year'] = ['MIN', 'MAX', 'AVG', 'STD'] 
+        
+        new_rows = pd.DataFrame(stats_dict)
+        
+        return pd.concat([group, new_rows], ignore_index=True)
+        
+    result_df = grouped.apply(calculate_stats).reset_index(drop=True)
+    result_df = result_df.fillna('')
 
-        result_df = grouped.apply(calculate_stats).reset_index(drop=True)
-        if (requestedData['summary_type']=='Seasonal'):
-            season_cols = ['JFM', 'FMA', 'MAM', 'AMJ', 'MJJ', 'JJA', 'JAS', 'ASO', 'SON', 'OND', 'NDJ', 'DRY', 'WET', 'ANNUAL', 'DJFM']
-            for col in season_cols:
-                if col not in result_df.columns:
-                    result_df[col] = pd.NA
-
-            result_df = result_df[index+season_cols]
-
-        result_df = result_df.fillna('')
-
-        data = result_df.to_dict(orient='records')
+    data = result_df.to_dict(orient='records')
 
     response = data
     return JsonResponse(response, status=status.HTTP_200_OK, safe=False)
@@ -6608,23 +6608,32 @@ def get_agromet_summary_data(request):
 class AgroMetSummariesView(LoginRequiredMixin, TemplateView):
     template_name = "wx/agromet/agromet_summaries.html"
     agromet_variable_symbols = [
-        'AIRTEMP', # Air Temp
-        'PRECIP', # Rainfall
-        # Soil Moisture
-        'TSOIL1', # Soil Temp 1feet
-        'TSOIL4', # Soil Temp 4feet
-        'RH', # Relative HUumidity
-        'WNDSPD', # Wind Speed
-        'WNDDIR', # Wind Direction
-        'EVAPPAN', # Evaportaion
-        # Evapotranspiration
-        'SOLARRAD', # Solar Radiation
+        'TEMP',
+        'TEMPAVG',
+        'TEMPMAX',
+        'TEMPMIN',
+        'EVAPPAN',
+        'PRECIP',
+        'RH',
+        'RHAVG',
+        'RHMAX',
+        'RHMIN',
+        'TSOIL1',
+        'TSOIL4',
+        'SOLARRAD',
+        'WNDDIR',
+        'WNDSPD',
+        'WNDSPAVG',
+        'WNDSPMAX',
+        'WNDSPMIN'
     ]  
 
     agromet_variable_ids = Variable.objects.filter(symbol__in=agromet_variable_symbols).values_list('id', flat=True)
               
     def get(self, request, *args, **kwargs):
         context = self.get_context_data(**kwargs)
+
+        context['username'] = f'{request.user.first_name} {request.user.last_name}' if request.user.first_name and request.user.last_name else request.user.username
 
         context['station_id'] = request.GET.get('station_id', 'null')
         context['variable_ids'] = request.GET.get('variable_ids', 'null')
@@ -6635,7 +6644,7 @@ class AgroMetSummariesView(LoginRequiredMixin, TemplateView):
         context['oldest_year'] = 1900
         context['stationvariable_list'] = list(station_variables)
         context['variable_list'] = list(Variable.objects.filter(symbol__in=self.agromet_variable_symbols).values('id', 'name', 'symbol'))
-        context['station_list'] = list(Station.objects.filter(id__in=station_ids, is_active=True).values('id', 'name', 'code', 'is_automatic'))
+        context['station_list'] = list(Station.objects.filter(id__in=station_ids, is_active=True).values('id', 'name', 'code', 'is_automatic', 'latitude', 'longitude'))
 
         return self.render_to_response(context)
 
@@ -6664,7 +6673,7 @@ class AgroMetProductsView(LoginRequiredMixin, TemplateView):
 
         context['station_id'] = request.GET.get('station_id', 'null')
         context['variable_ids'] = request.GET.get('variable_ids', 'null')
-
+    
         station_variables = StationVariable.objects.filter(variable_id__in=self.agromet_variable_ids).values('id', 'station_id', 'variable_id')
         station_ids = station_variables.values_list('station_id', flat=True).distinct()
 
