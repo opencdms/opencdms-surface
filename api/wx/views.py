@@ -6488,10 +6488,28 @@ def delete_pgia_hourly_capture_row(request):
     return Response(result, status=status.HTTP_200_OK)
 
 
-def calculate_agromet_summary_df_statistics(df: pd.DataFrame):
+def calculate_agromet_summary_df_statistics(df: pd.DataFrame) -> list:
+    """
+    Calculates summary statistics (min, max, average, and standard deviation) for numeric columns
+    in the input DataFrame, grouped by 'station' and 'variable_id'. The results are appended to
+    the original DataFrame as new rows.
+
+    Args:
+        df (pd.DataFrame): Input DataFrame containing the following columns:
+                           - 'station': Identifier for the station.
+                           - 'variable_id': Identifier for the variable.
+                           - 'month': Month of the observation (optional).
+                           - 'year': Year of the observation.
+                           - Other columns: Numeric variables (e.g., temperature, humidity).
+
+    Returns:
+        list: A list of dictionaries, where each dictionary represents a row in the resulting DataFrame.
+              The rows include the original data as well as new rows for the calculated statistics.
+              Each dictionary has keys corresponding to the DataFrame columns, with additional rows
+              for 'MIN', 'MAX', 'AVG', and 'STD' values. The calculated statistics symbols are present in the 'year' column. 
+    """
+
     index = ['station', 'variable_id', 'month', 'year']
-    # index = [col for col in df.columns if col not in ['agg', 'value']] 
-    # agg_cols = [col for col in df.columns if col not in index]  # Columns to aggregate
     agg_cols = [col for col in df.columns if (col not in index) and not col.endswith("(%)")]
     grouped = df.groupby(['station', 'variable_id'])
     
@@ -6504,14 +6522,18 @@ def calculate_agromet_summary_df_statistics(df: pd.DataFrame):
         stats_dict = {}
         for col in agg_cols:
             stats_dict[col] = [min_values[col], max_values[col], avg_values[col], std_values[col]]
-        stats_dict['station'] = group.name[0]
-        stats_dict['variable_id'] = group.name[1]
-        stats_dict['year'] = ['MIN', 'MAX', 'AVG', 'STD'] 
+        
+        # Add metadata for the new rows
+        stats_dict['station'] = group.name[0]  # Station name from the group key
+        stats_dict['variable_id'] = group.name[1]  # Variable ID from the group key
+        stats_dict['year'] = ['MIN', 'MAX', 'AVG', 'STD']  # Labels for the new rows
         
         new_rows = pd.DataFrame(stats_dict)
         
+        # Append the new rows to the original group
         return pd.concat([group, new_rows], ignore_index=True)
-        
+    
+    # Apply the helper function to each group and combine the results
     result_df = grouped.apply(calculate_stats).reset_index(drop=True)
     result_df = result_df.fillna('')
     data = result_df.to_dict(orient='records')
@@ -6519,49 +6541,78 @@ def calculate_agromet_summary_df_statistics(df: pd.DataFrame):
     return data
 
 
-def get_agromet_summary_df_min_max(df: pd.DataFrame):
-    minMaxDict = {}
+def get_agromet_summary_df_min_max(df: pd.DataFrame) -> dict:
+    """
+    Generates a summary dictionary containing the minimum and maximum values for each variable
+    at each station, along with the corresponding time periods (month/year or year).
+
+    Args:
+        df (pd.DataFrame): Input DataFrame containing the following columns:
+                            - 'station': Identifier for the station.
+                            - 'variable_id': Identifier for the variable.
+                            - 'month' (optional): Month of the observation.
+                            - 'year': Year of the observation.
+                            - Other columns: Numeric variables (e.g., temperature, humidity).
+
+    Returns:
+        dict: A nested dictionary with the following structure:
+              {
+                  "station_1": {
+                      "variable_id_1": {
+                          "variable_name_1": {
+                              "min": [{"month": X, "year": Y}, ...],  # Records for min value
+                              "max": [{"month": X, "year": Y}, ...]   # Records for max value
+                          },
+                          ...
+                      },
+                      ...
+                  },
+                  ...
+              }
+              If 'month' is not present in the input DataFrame, the "month" key is omitted.
+    """
 
     index = ['month', 'year'] if 'month' in df.columns else ['year']
-
-    stations = df['station'].unique()
-    for station in stations:
-        minMaxDict[str(station)] = {}  # Ensure station key is a string
-        df_station = df[df['station'] == station].drop(columns=['station'])
-        variable_ids = df_station['variable_id'].unique()
+    grouped = df.groupby(['station', 'variable_id'] + index)
+    agg_df = grouped.agg(['min', 'max']).reset_index()
+    # Flatten the MultiIndex columns
+    agg_df.columns = [f"{col[0]}_{col[1]}" if col[1] else col[0] for col in agg_df.columns]
+    
+    # Initialize the result dictionary
+    minMaxDict = {}
+    for (station, variable_id), group in agg_df.groupby(['station', 'variable_id']):
+        station = str(station)
+        variable_id = str(variable_id)
         
-        for variable_id in variable_ids:
-            minMaxDict[str(station)][str(variable_id)] = {}  # Ensure variable_id key is a string
-            df_variable_id = df_station[df_station['variable_id'] == variable_id].drop(columns=['variable_id'])
-            agg_cols = [col for col in df_variable_id.columns if col not in index]
-
-            for col in agg_cols:
-                df_chunk = df_variable_id[index + [col]]
-
-                min_value = df_chunk[col].min()
-                max_value = df_chunk[col].max()
-
-                df_min = df_chunk[df_chunk[col] == min_value][index]
-                df_max = df_chunk[df_chunk[col] == max_value][index]
-
-                min_records = df_min.to_dict('records')
-                max_records = df_max.to_dict('records')
-
-                for record in min_records:
-                    for key, value in record.items():
-                        if isinstance(value, (np.integer, np.floating)):
-                            record[key] = int(value) if isinstance(value, np.integer) else float(value)
-
-                for record in max_records:
-                    for key, value in record.items():
-                        if isinstance(value, (np.integer, np.floating)):
-                            record[key] = int(value) if isinstance(value, np.integer) else float(value)
-
-                minMaxDict[str(station)][str(variable_id)][str(col)] = {
-                    'min': min_records,
-                    'max': max_records
-                }
-    return minMaxDict  
+        if station not in minMaxDict:
+            minMaxDict[station] = {}
+        if variable_id not in minMaxDict[station]:
+            minMaxDict[station][variable_id] = {}
+        
+        # Iterate over each column (excluding index columns)
+        for col in df.columns:
+            if col not in ['station', 'variable_id'] + index:
+                col_min = group[f"{col}_min"].min()
+                col_max = group[f"{col}_max"].max()
+                
+                # Find records corresponding to min and max values
+                min_records = group[group[f"{col}_min"] == col_min][index].to_dict('records')
+                max_records = group[group[f"{col}_max"] == col_max][index].to_dict('records')
+                
+                # Convert numpy types to native Python types
+                def convert_types(records):
+                    for record in records:
+                        for key, value in record.items():
+                            if isinstance(value, (np.integer, np.floating)):
+                                record[key] = int(value) if isinstance(value, np.integer) else float(value)
+                    return records
+                
+                min_records = convert_types(min_records)
+                max_records = convert_types(max_records)
+                
+                minMaxDict[station][variable_id][str(col)] = {'min': min_records, 'max': max_records}
+    
+    return minMaxDict
 
 
 @api_view(['GET'])
@@ -6643,11 +6694,8 @@ def get_agromet_summary_data(request):
     config = settings.SURFACE_CONNECTION_STRING
     with psycopg2.connect(config) as conn:
         df = pd.read_sql(query, conn)
-        # data = df.fillna('').to_dict(orient='records')
 
-    if df.empty:
-        response = []
-        return JsonResponse(response, status=status.HTTP_200_OK, safe=False)
+    if df.empty: return JsonResponse(response=[], status=status.HTTP_200_OK, safe=False)
 
     response = {
         'tableData': calculate_agromet_summary_df_statistics(df),

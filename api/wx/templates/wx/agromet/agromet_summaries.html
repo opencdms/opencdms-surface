@@ -462,7 +462,6 @@
 				.then(response => {
 					this.requestedData.responseData = response.data.tableData;
 					this.requestedData.responseMinMaxData = response.data.minMaxData;
-					console.log(this.requestedData.responseMinMaxData)
 				})
 				.catch(error => {
 					console.error('Error fetching data:', error);
@@ -470,7 +469,6 @@
 				.finally(() => {
 					this.loading_data = false
 				});
-
 			},
 			convertToCSV(data) {
 				const { stationId, variableIds, summaryType, startYear, endYear, interval, requestedAt, months, ...rest } = this.requestedData;
