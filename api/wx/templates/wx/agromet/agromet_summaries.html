@@ -129,13 +129,22 @@
 					</v-col>
 					<v-col cols="2" v-if="requestData.validateData">
 						<v-text-field
-							v-model="requestData.minHourPct"
+							v-model="requestData.maxHourPct"
 							:rules="[rules.required, rules.numeric, rules.percentage]"
-							label="Minimum Hour Percentage"
+							label="Maximum Hour Percentage"
 							hint="*Required"
 							persistent-hint
 						/>
 					</v-col>
+					<v-col cols="2" v-if="requestData.validateData">
+						<v-text-field
+							v-model="requestData.maxDayPct"
+							:rules="[rules.required, rules.numeric, rules.percentage]"
+							label="Maximum Day Percentage"
+							hint="*Required"
+							persistent-hint
+						/>
+					</v-col>					
 					<v-col cols="2" v-if="requestData.validateData">
 						<v-text-field
 							v-model="requestData.maxDayGap"
@@ -144,7 +153,8 @@
 							hint="*Required"
 							persistent-hint
 						/>
-					</v-col>													
+					</v-col>
+																	
 				</v-row>
 				<v-row>
 					<v-col cols="12">
@@ -157,14 +167,14 @@
 							@input="showing_info = false"
 						>
 							Data validation works as follows:
-							The first parameter specifies the 
-							minimum percentage of data required
-							from the hourly_summary to compute
-							a valid day of data.
-							The second parameter sets the 
-							maximum allowable gap between consecutive days;
+							The first parameter defines the maximum allowable percentage
+							of missing data in the hourly summary to compute a valid day.
+							The second parameter sets the maximum percentage of missing 
+							valid days for a valid aggregation;
+							if exceeded, the aggregation returns null for that partition.
+							The third parameter specifies the maximum gap between consecutive days;
 							if the gap exceeds this limit,
-							the aggregation returns null for that partition
+							the aggregation returns null for that partition.
 					  	</v-alert>					
 					</v-col>
 				</v-row>				
@@ -193,11 +203,12 @@
 								<v-data-table
 									:headers="dataTable.headers"
 									:items="dataTable.data"
+									:items-per-page="-1"
 								>
 									<template v-for="header in dataTable.colorHeaders" v-slot:[`item.${header.value}`]="{ item }">
-										<v-chip class="px-5" :color="getColor(header, item)">
-											[[ item[header.value] ]]
-										</v-chip>
+											<span :style="{ color: getColor(header, item) }">
+												[[ item[header.value] ]]
+											</span>
 								 	 </template>						  
 								</v-data-table>
 							</template>
@@ -238,7 +249,7 @@
 				endYear: { 
 					required: value => !!value,
 				},
-				minHourPct: { 
+				maxHourPct: { 
 					numeric,
 					between: value =>  0 <= value && value <= 100,
 					requiredIf: value => this.requiredIfValidateData(value),
@@ -248,6 +259,11 @@
 					positive: value => value >= 0,
 					requiredIf: value => this.requiredIfValidateData(value),
 				},
+				maxHourPct: { 
+					numeric,
+					between: value =>  0 <= value && value <= 100,
+					requiredIf: value => this.requiredIfValidateData(value),
+				},				
 				months: {
 					requiredIf: value => this.requiredIfMonthlySummary(value),
 				},
@@ -280,7 +296,8 @@
 				startYear: null,
 				endYear: null,
 				validateData: true,
-				minHourPct: 80,
+				maxHourPct: 20,
+				maxDayPct: 20,
 				maxDayGap: 5,
 			},
 			requestedData: {
@@ -294,8 +311,9 @@
 				responseData: null,
 				responseMinMaxData: null,
 				requestedAt: null,
-				minHourPct: null,
-				maxDayGap: null,				
+				maxHourPct: null,
+				maxDayPct: null,
+				maxDayGap: null,
 			},
 			filters: {
 				is_seasonal: true,
@@ -405,7 +423,7 @@
 				const keys = filteredData.length? Object.keys(filteredData[0]).filter(item => !baseKeys.includes(item)): [];
 				const calcHeaders = keys.map(item => ({text: item, align: 'end', value: item, sortable: false}));
 
-				const colorHeaders = calcHeaders.filter(item => !item.value.endsWith('(%)'));
+				const colorHeaders = calcHeaders.filter(item => !item.value.endsWith('(% of days)'));
 				
 				return { headers: [...baseHeaders, ...calcHeaders], data: filteredData, colorHeaders: colorHeaders};		
 			},
@@ -437,7 +455,8 @@
 				this.requestedData.endYear = this.requestData.endYear
 				this.requestedData.summaryType = this.requestData.summaryType
 				this.requestedData.validateData = this.requestData.validateData
-				this.requestedData.minHourPct = this.requestData.minHourPct
+				this.requestedData.maxHourPct = this.requestData.maxHourPct
+				this.requestedData.maxDayPct = this.requestData.maxDayPct
 				this.requestedData.maxDayGap = this.requestData.maxDayGap
 				this.requestedData.responseData = null
 				this.requestedData.responseMinMaxData = null
@@ -454,7 +473,8 @@
 					end_year: this.requestedData.endYear,
 					summary_type: this.requestedData.summaryType,
 					validate_data: this.requestedData.validateData,
-					min_hour_pct: this.requestedData.minHourPct,
+					max_hour_pct: this.requestedData.maxHourPct,
+					max_day_pct: this.requestedData.maxDayPct,
 					max_day_gap: this.requestedData.maxDayGap,
 				};
 
@@ -530,10 +550,10 @@
 				const is_min = this.filteredMinMaxData[header.value].min.some(item => JSON.stringify(item) === JSON.stringify(item_entry));
 				const is_max = this.filteredMinMaxData[header.value].max.some(item => JSON.stringify(item) === JSON.stringify(item_entry));
 
-				if (is_min && is_max) return 'orange'
-				else if (is_min) return 'red'
-				else if (is_max) return 'green'
-				return 'white'
+				if (is_min && is_max) return 'black'
+				else if (is_min) return 'blue'
+				else if (is_max) return 'red'
+				return 'black'
 			},			
 		},
 		mounted() {

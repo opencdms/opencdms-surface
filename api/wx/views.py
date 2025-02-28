@@ -6510,7 +6510,7 @@ def calculate_agromet_summary_df_statistics(df: pd.DataFrame) -> list:
     """
 
     index = ['station', 'variable_id', 'month', 'year']
-    agg_cols = [col for col in df.columns if (col not in index) and not col.endswith("(%)")]
+    agg_cols = [col for col in df.columns if (col not in index) and not col.endswith("(%% of days)")]
     grouped = df.groupby(['station', 'variable_id'])
     
     def calculate_stats(group):
@@ -6627,7 +6627,8 @@ def get_agromet_summary_data(request):
             'months': request.GET.get('months'),
             'interval': request.GET.get('interval'),
             'validate_data': request.GET.get('validate_data').lower() == 'true',
-            'min_hour_pct': request.GET.get('min_hour_pct'),
+            'max_hour_pct': request.GET.get('max_hour_pct'),
+            'max_day_pct': request.GET.get('max_day_pct'),
             'max_day_gap': request.GET.get('max_day_gap'),
         }
     except ValueError as e:
@@ -6655,8 +6656,10 @@ def get_agromet_summary_data(request):
         'start_year': requestedData['start_year'],
         'end_year': requestedData['end_year'],
         'months': requestedData['months'],
-        'min_hour_pct': float(requestedData['min_hour_pct'])/100,
+        'max_hour_pct': float(requestedData['max_hour_pct']),
+        'max_day_pct': float(requestedData['max_day_pct']),
         'max_day_gap': float(requestedData['max_day_gap'])
+
     }
     env = Environment(loader=FileSystemLoader('/surface/wx/sql/agromet/agromet_summaries'))
 
@@ -6695,7 +6698,9 @@ def get_agromet_summary_data(request):
     with psycopg2.connect(config) as conn:
         df = pd.read_sql(query, conn)
 
-    if df.empty: return JsonResponse(response=[], status=status.HTTP_200_OK, safe=False)
+    if df.empty:
+        response = []
+        return JsonResponse(response, status=status.HTTP_200_OK, safe=False)
 
     response = {
         'tableData': calculate_agromet_summary_df_statistics(df),

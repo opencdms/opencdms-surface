@@ -39,7 +39,7 @@ WITH month_days AS (
         ,EXTRACT(YEAR FROM day) AS year        
         ,value      
     FROM daily_data
-    WHERE total_hours >= {{min_hour_pct}}*24
+    WHERE 100*total_hours >= (100-{{max_hour_pct}})*24
 )
 ,daily_lagged_data AS (
     SELECT
@@ -89,17 +89,31 @@ WITH month_days AS (
     JOIN wx_station st ON st.id = dld.station_id
     GROUP BY st.name, variable_id, year, month, sampling_operation
 )
+,aggregation_pct AS (
+    SELECT
+        station
+        ,variable_id
+        ,ad.year
+        ,ad.month
+        ,CASE WHEN "agg_1_max_day_diff" <= ({{max_day_gap}}+1) THEN "agg_1" ELSE NULL END AS "Days 1-10"
+        ,ROUND(((100*(CASE WHEN ("agg_1_max_day_diff" <= ({{max_day_gap}}+1)) THEN "agg_1_count" ELSE 0 END))::numeric/10),2) AS "Days 1-10 Day (%)"
+        ,CASE WHEN "agg_2_max_day_diff" <= ({{max_day_gap}}+1) THEN "agg_2" ELSE NULL END AS "Days 11-20"
+        ,ROUND(((100*(CASE WHEN ("agg_2_max_day_diff" <= ({{max_day_gap}}+1)) THEN "agg_2_count" ELSE 0 END))::numeric/10),2) AS "Days 11-20 Day (%)"
+        ,CASE WHEN "agg_3_max_day_diff" <= ({{max_day_gap}}+1) THEN "agg_3" ELSE NULL END AS "Days 21-"
+        ,ROUND(((100*(CASE WHEN ("agg_3_max_day_diff" <= ({{max_day_gap}}+1)) THEN "agg_3_count" ELSE 0 END))::numeric/(days_in_month::numeric-21)),2) AS "Days 21- Day (%)"
+    FROM aggreated_data ad
+    LEFT JOIN month_days atd ON (atd.year=ad.year AND atd.month=ad.month) 
+)
 SELECT
     station
     ,variable_id
-    ,atd.year
-    ,atd.month
-    ,CASE WHEN "agg_1_max_day_diff" <= ({{max_day_gap}}+1) THEN "agg_1" ELSE NULL END AS "Days 1-10"
-    ,ROUND(((100*(CASE WHEN ("agg_1_max_day_diff" <= ({{max_day_gap}}+1)) THEN "agg_1_count" ELSE 0 END))::numeric/10),2) AS "Days 1-10 (%)"
-    ,CASE WHEN "agg_2_max_day_diff" <= ({{max_day_gap}}+1) THEN "agg_2" ELSE NULL END AS "Days 11-20"
-    ,ROUND(((100*(CASE WHEN ("agg_2_max_day_diff" <= ({{max_day_gap}}+1)) THEN "agg_2_count" ELSE 0 END))::numeric/10),2) AS "Days 11-20 (%)"
-    ,CASE WHEN "agg_3_max_day_diff" <= ({{max_day_gap}}+1) THEN "agg_3" ELSE NULL END AS "Days 21-"
-    ,ROUND(((100*(CASE WHEN ("agg_3_max_day_diff" <= ({{max_day_gap}}+1)) THEN "agg_3_count" ELSE 0 END))::numeric/(days_in_month::numeric-21)),2) AS "Days 21- (%)"
-FROM aggreated_data ad
-LEFT JOIN month_days atd ON (atd.year=ad.year AND atd.month=ad.month) 
+    ,year
+    ,month
+    ,CASE WHEN ("Days 1-10 Day (%)" >= (100-{{max_day_pct}})) THEN "Days 1-10" ELSE NULL END AS "Days 1-10"
+    ,"Days 1-10 Day (%)"
+    ,CASE WHEN ("Days 11-20 Day (%)" >= (100-{{max_day_pct}})) THEN "Days 11-20" ELSE NULL END AS "Days 11-20"
+    ,"Days 11-20 Day (%)"
+    ,CASE WHEN ("Days 21- Day (%)" >= (100-{{max_day_pct}})) THEN "Days 21-" ELSE NULL END AS "Days 21-"
+    ,"Days 21- Day (%)"
+FROM aggregation_pct
 ORDER BY year, month

@@ -56,7 +56,7 @@ SELECT
     ,atd.year
     ,atd.month
     ,"value" AS "Aggregation"
-    ,ROUND(((100*"count")::numeric/days_in_month::numeric),2) AS "Aggregation (%)"
+    ,ROUND(((100*"count")::numeric/days_in_month::numeric),2) AS "Aggregation (% of days)"
 FROM aggreated_data ad
 LEFT JOIN month_days atd ON (atd.year=ad.year AND atd.month=ad.month) 
 ORDER BY year, month

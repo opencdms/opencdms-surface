@@ -234,7 +234,7 @@ WITH month_days AS (
 SELECT
     station
     ,variable_id
-    ,atd.year
+    ,ad.year
     ,"JFM"
     ,ROUND(((100*"JFM_count")::numeric/"JFM_total"::numeric),2) AS "JFM (%)"
     ,"FMA"
@@ -267,4 +267,4 @@ SELECT
     ,ROUND(((100*"DJFM_count")::numeric/"DJFM_total"::numeric),2) AS "DJFM (%)"
 FROM aggreated_data ad
 LEFT JOIN aggreation_total_days atd ON atd.year=ad.year
-ORDER BY year
+ORDER BY ad.year

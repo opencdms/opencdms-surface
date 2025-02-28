@@ -39,7 +39,7 @@ WITH month_days AS (
         ,EXTRACT(YEAR FROM day) AS year        
         ,value      
     FROM daily_data
-    WHERE total_hours >= {{min_hour_pct}}*24
+    WHERE (100*total_hours) >= (100-{{max_hour_pct}})*24
 )
 ,daily_lagged_data AS (
     SELECT
@@ -69,13 +69,24 @@ WITH month_days AS (
     JOIN wx_station st ON st.id = dld.station_id
     GROUP BY st.name, variable_id, year, month, sampling_operation
 )
+,aggregation_pct AS (
+    SELECT
+        station
+        ,variable_id
+        ,atd.year
+        ,atd.month
+        ,CASE WHEN "max_day_diff" <= ({{max_day_gap}}+1) THEN "value" ELSE NULL END AS "Aggregation"
+        ,ROUND(((100*(CASE WHEN ("max_day_diff" <= ({{max_day_gap}}+1)) THEN "count" ELSE 0 END))::numeric/days_in_month::numeric),2) AS "Aggregation (% of days)"
+    FROM aggreated_data ad
+    LEFT JOIN month_days atd ON (atd.year=ad.year AND atd.month=ad.month) 
+    ORDER BY year, month
+)
 SELECT
     station
     ,variable_id
-    ,atd.year
-    ,atd.month
-    ,CASE WHEN "max_day_diff" <= ({{max_day_gap}}+1) THEN "value" ELSE NULL END AS "Aggregation"
-    ,ROUND(((100*(CASE WHEN ("max_day_diff" <= ({{max_day_gap}}+1)) THEN "count" ELSE 0 END))::numeric/days_in_month::numeric),2) AS "Aggregation (%)"
-FROM aggreated_data ad
-LEFT JOIN month_days atd ON (atd.year=ad.year AND atd.month=ad.month) 
+    ,year
+    ,month
+    ,CASE WHEN "Aggregation (% of days)" >= (100-{{max_day_pct}}) THEN "Aggregation" ELSE NULL END AS "Aggregation"
+    ,"Aggregation (% of days)"
+FROM aggregation_pct
 ORDER BY year, month
