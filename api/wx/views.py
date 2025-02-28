@@ -6487,6 +6487,83 @@ def delete_pgia_hourly_capture_row(request):
 
     return Response(result, status=status.HTTP_200_OK)
 
+
+def calculate_agromet_summary_df_statistics(df: pd.DataFrame):
+    index = ['station', 'variable_id', 'month', 'year']
+    # index = [col for col in df.columns if col not in ['agg', 'value']] 
+    # agg_cols = [col for col in df.columns if col not in index]  # Columns to aggregate
+    agg_cols = [col for col in df.columns if (col not in index) and not col.endswith("(%)")]
+    grouped = df.groupby(['station', 'variable_id'])
+    
+    def calculate_stats(group):
+        min_values = group[agg_cols].min()
+        max_values = group[agg_cols].max()
+        avg_values = group[agg_cols].mean().round(2)
+        std_values = group[agg_cols].std().round(2)
+
+        stats_dict = {}
+        for col in agg_cols:
+            stats_dict[col] = [min_values[col], max_values[col], avg_values[col], std_values[col]]
+        stats_dict['station'] = group.name[0]
+        stats_dict['variable_id'] = group.name[1]
+        stats_dict['year'] = ['MIN', 'MAX', 'AVG', 'STD'] 
+        
+        new_rows = pd.DataFrame(stats_dict)
+        
+        return pd.concat([group, new_rows], ignore_index=True)
+        
+    result_df = grouped.apply(calculate_stats).reset_index(drop=True)
+    result_df = result_df.fillna('')
+    data = result_df.to_dict(orient='records')
+
+    return data
+
+
+def get_agromet_summary_df_min_max(df: pd.DataFrame):
+    minMaxDict = {}
+
+    index = ['month', 'year'] if 'month' in df.columns else ['year']
+
+    stations = df['station'].unique()
+    for station in stations:
+        minMaxDict[str(station)] = {}  # Ensure station key is a string
+        df_station = df[df['station'] == station].drop(columns=['station'])
+        variable_ids = df_station['variable_id'].unique()
+        
+        for variable_id in variable_ids:
+            minMaxDict[str(station)][str(variable_id)] = {}  # Ensure variable_id key is a string
+            df_variable_id = df_station[df_station['variable_id'] == variable_id].drop(columns=['variable_id'])
+            agg_cols = [col for col in df_variable_id.columns if col not in index]
+
+            for col in agg_cols:
+                df_chunk = df_variable_id[index + [col]]
+
+                min_value = df_chunk[col].min()
+                max_value = df_chunk[col].max()
+
+                df_min = df_chunk[df_chunk[col] == min_value][index]
+                df_max = df_chunk[df_chunk[col] == max_value][index]
+
+                min_records = df_min.to_dict('records')
+                max_records = df_max.to_dict('records')
+
+                for record in min_records:
+                    for key, value in record.items():
+                        if isinstance(value, (np.integer, np.floating)):
+                            record[key] = int(value) if isinstance(value, np.integer) else float(value)
+
+                for record in max_records:
+                    for key, value in record.items():
+                        if isinstance(value, (np.integer, np.floating)):
+                            record[key] = int(value) if isinstance(value, np.integer) else float(value)
+
+                minMaxDict[str(station)][str(variable_id)][str(col)] = {
+                    'min': min_records,
+                    'max': max_records
+                }
+    return minMaxDict  
+
+
 @api_view(['GET'])
 def get_agromet_summary_data(request):
     try:
@@ -6540,8 +6617,7 @@ def get_agromet_summary_data(request):
         if requestedData['validate_data']:
             template_name = 'seasonal_hourly_valid.sql' if is_hourly_summary else 'seasonal_daily_valid.sql'
         else:
-            template_name = 'seasonal_hourly_raw.sql' if is_hourly_summary else 'seasonal_daily_raw.sql'
-            
+            template_name = 'seasonal_hourly_raw.sql' if is_hourly_summary else 'seasonal_daily_raw.sql'       
     elif requestedData['summary_type'] == 'Monthly':
         if requestedData['interval'] == '7 days':
             if requestedData['validate_data']:
@@ -6573,35 +6649,11 @@ def get_agromet_summary_data(request):
         response = []
         return JsonResponse(response, status=status.HTTP_200_OK, safe=False)
 
+    response = {
+        'tableData': calculate_agromet_summary_df_statistics(df),
+        'minMaxData': get_agromet_summary_df_min_max(df)
+    }
 
-    index = ['station', 'variable_id', 'month', 'year']
-    # index = [col for col in df.columns if col not in ['agg', 'value']] 
-    agg_cols = [col for col in df.columns if col not in index]  # Columns to aggregate
-    grouped = df.groupby(['station', 'variable_id'])
-
-    def calculate_stats(group):
-        min_values = group[agg_cols].min()
-        max_values = group[agg_cols].max()
-        avg_values = group[agg_cols].mean().round(2)
-        std_values = group[agg_cols].std().round(2)
-
-        stats_dict = {}
-        for col in agg_cols:
-            stats_dict[col] = [min_values[col], max_values[col], avg_values[col], std_values[col]]
-        stats_dict['station'] = group.name[0]
-        stats_dict['variable_id'] = group.name[1]
-        stats_dict['year'] = ['MIN', 'MAX', 'AVG', 'STD'] 
-        
-        new_rows = pd.DataFrame(stats_dict)
-        
-        return pd.concat([group, new_rows], ignore_index=True)
-        
-    result_df = grouped.apply(calculate_stats).reset_index(drop=True)
-    result_df = result_df.fillna('')
-
-    data = result_df.to_dict(orient='records')
-
-    response = data
     return JsonResponse(response, status=status.HTTP_200_OK, safe=False)
 
 

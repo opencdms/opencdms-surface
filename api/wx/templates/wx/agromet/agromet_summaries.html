@@ -193,7 +193,13 @@
 								<v-data-table
 									:headers="dataTable.headers"
 									:items="dataTable.data"
-								></v-data-table>
+								>
+									<template v-for="header in dataTable.colorHeaders" v-slot:[`item.${header.value}`]="{ item }">
+										<v-chip class="px-5" :color="getColor(header, item)">
+											[[ item[header.value] ]]
+										</v-chip>
+								 	 </template>						  
+								</v-data-table>
 							</template>
 						</v-card-text>
 						<v-card-actions>
@@ -286,6 +292,7 @@
 				startYear: null,
 				endYear: null,
 				responseData: null,
+				responseMinMaxData: null,
 				requestedAt: null,
 				minHourPct: null,
 				maxDayGap: null,				
@@ -317,6 +324,7 @@
 				{% for station in station_list %}
 					{
 						id: {{station.id}},
+						base_name: "{{station.name | safe }}",
 						name: "{{station.name | safe }} - {{station.code}}",
 						is_automatic:  {{station.is_automatic|yesno:"true,false"}},
 						latitude: {{station.latitude}},
@@ -396,9 +404,17 @@
 
 				const keys = filteredData.length? Object.keys(filteredData[0]).filter(item => !baseKeys.includes(item)): [];
 				const calcHeaders = keys.map(item => ({text: item, align: 'end', value: item, sortable: false}));
+
+				const colorHeaders = calcHeaders.filter(item => !item.value.endsWith('(%)'));
 				
-				return { headers: [...baseHeaders, ...calcHeaders], data: filteredData};				
+				return { headers: [...baseHeaders, ...calcHeaders], data: filteredData, colorHeaders: colorHeaders};		
 			},
+			filteredMinMaxData () {
+				const selectedVariableId = this.requestedData.variableIds[this.tab];
+				const station = this.stationList.find(station => station.id === this.requestedData.stationId)
+
+				return this.requestedData.responseMinMaxData[station.base_name][selectedVariableId]
+			}
 		},
 		methods: {
 			requiredIfMonthlySummary(value) {
@@ -424,6 +440,7 @@
 				this.requestedData.minHourPct = this.requestData.minHourPct
 				this.requestedData.maxDayGap = this.requestData.maxDayGap
 				this.requestedData.responseData = null
+				this.requestedData.responseMinMaxData = null
 				this.requestedData.requestedAt = moment().format('YYYY-MM-DD HH:mm')
 
 				const url = `/wx/agromet/summaries/get/`
@@ -443,7 +460,9 @@
 
         		axios.get(url, { params })
 				.then(response => {
-					this.requestedData.responseData = response.data;
+					this.requestedData.responseData = response.data.tableData;
+					this.requestedData.responseMinMaxData = response.data.minMaxData;
+					console.log(this.requestedData.responseMinMaxData)
 				})
 				.catch(error => {
 					console.error('Error fetching data:', error);
@@ -506,7 +525,18 @@
 				document.body.appendChild(link);
 				link.click();
 				document.body.removeChild(link);
-			}
+			},
+			getColor (header, item) {	
+				let item_entry = (this.requestedData.summaryType === 'Monthly')? {month: item.month, year: item.year} : {year: item.year}
+
+				const is_min = this.filteredMinMaxData[header.value].min.some(item => JSON.stringify(item) === JSON.stringify(item_entry));
+				const is_max = this.filteredMinMaxData[header.value].max.some(item => JSON.stringify(item) === JSON.stringify(item_entry));
+
+				if (is_min && is_max) return 'orange'
+				else if (is_min) return 'red'
+				else if (is_max) return 'green'
+				return 'white'
+			},			
 		},
 		mounted() {
 		}

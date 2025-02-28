@@ -87,7 +87,7 @@ SELECT
     ,"agg_2" AS "Days 8-14"
     ,ROUND(((100*"agg_2_count")::numeric/7),2) AS "Days 8-15 (%)"
     ,"agg_3" AS "Days 15-21"
-    ,ROUND(((100*"agg_3_count")::numeric/7),2) AS "Days 16-21 %"
+    ,ROUND(((100*"agg_3_count")::numeric/7),2) AS "Days 16-21 (%)"
     ,"agg_4" AS "Days 22-"
     ,ROUND(((100*"agg_4_count")::numeric/(days_in_month-21)::numeric),2) AS "Days 22- (%)"
 FROM aggreated_data ad
